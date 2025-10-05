@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Daily Photo</title>
+  <style>
+    :root{
+      --bg:#0b1020;        /* page background */
+      --card:#0f172a;      /* card background */
+      --text:#e5e7eb;      /* main text */
+      --muted:#94a3b8;
+      --accent:#f59e0b;
+      --ring: rgba(245, 158, 11, .35);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background:
+        radial-gradient(1200px 600px at 100% -10%, rgba(245,158,11,.06), transparent 50%),
+        radial-gradient(1000px 500px at -10% 120%, rgba(59,130,246,.06), transparent 50%),
+        var(--bg);
+      color:var(--text);
+      display:grid; place-items:center;
+      padding:24px;
+    }
+
+    .shell{
+      width:min(720px, 95vw);
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid rgba(148,163,184,.18);
+      border-radius:18px;
+      overflow:hidden;
+      box-shadow: 0 20px 50px rgba(0,0,0,.35);
+    }
+
+    header{
+      padding:14px 18px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      border-bottom:1px solid rgba(148,163,184,.15);
+    }
+    .title{font-weight:800; letter-spacing:.2px}
+    .meta{color:var(--muted); font-size:13px}
+
+    .media-wrap{
+      position:relative;
+      background: #0a0f1f;
+      display:grid; place-items:center;
+    }
+
+    /* Image styles */
+    img.daily-photo{
+      width:100%;
+      max-height:72vh;      /* keeps it nicely visible on laptops */
+      object-fit:cover;     /* crop to fill; change to 'contain' if you prefer letterboxing */
+      display:block;
+      background:#000;      /* prevents white flash while loading */
+    }
+
+    /* Caption ribbon */
+    .caption{
+      position:absolute; left:16px; bottom:16px;
+      background: rgba(2, 6, 23, .6);
+      backdrop-filter: blur(6px);
+      color:#f8fafc;
+      padding:8px 12px;
+      font-size:14px;
+      border-radius:12px;
+      border:1px solid rgba(148,163,184,.25);
+      max-width: calc(100% - 32px);
+    }
+
+    footer{
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      padding:12px 16px;
+      border-top:1px solid rgba(148,163,184,.15);
+    }
+
+    /* Optional debug controls (hidden by default) */
+    .controls{ display:none; gap:8px; }
+    .controls button{
+      background: transparent;
+      color:var(--text);
+      border:1px solid rgba(148,163,184,.35);
+      border-radius:10px;
+      padding:8px 10px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .controls button:focus-visible{
+      outline: 0;
+      box-shadow: 0 0 0 6px var(--ring);
+      border-color: var(--accent);
+    }
+    .note{ color:var(--muted); font-size:12px; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="card">
+      <header>
+        <div class="title">Daily Photo</div>
+        <div id="dateMeta" class="meta"></div>
+      </header>
+
+      <div class="media-wrap">
+        <img id="photo" class="daily-photo" alt="" loading="eager" />
+        <div id="caption" class="caption" role="note"></div>
+      </div>
+
+      <footer>
+        <div class="note">Updates at UK midnight • No repeats until all photos are shown</div>
+        <div class="controls" id="controls">
+          <button id="prevBtn" type="button" aria-label="Previous day">◀︎</button>
+          <button id="todayBtn" type="button" aria-label="Today">Today</button>
+          <button id="nextBtn" type="button" aria-label="Next day">▶︎</button>
+        </div>
+      </footer>
+    </div>
+  </main>
+
+  <script>
+    /* ------------------------------------------------------------
+       1) EDIT THIS LIST TO CHOOSE YOUR PHOTOS
+       - Use relative paths (e.g., "images/01.jpg") or full URLs.
+       - Optional 'caption' is shown on the ribbon; optional 'alt' for a11y.
+       - You can add/remove items anytime; bump SEASON_KEY when you do.
+       ------------------------------------------------------------ */
+    const PHOTOS = [
+      { src: "images/reveal/01.jpg", caption: "Morning light over the Thames", alt: "Sunrise over a river" },
+      { src: "images/reveal/02.jpg", caption: "Quiet high street after rain", alt: "A wet high street with reflections" },
+      { src: "images/reveal/03.jpg", caption: "Footpath across the downs", alt: "Grassy downs with a walking path" },
+      // Add more...
+    ];
+
+    /* ------------------------------------------------------------
+       2) OPTIONAL: set a 'season' and start date
+       - START_DATE marks day zero for cycling order (yyyy-mm-dd).
+       - SEASON_KEY is used to (deterministically) shuffle once per season.
+         If you change the photo set meaningfully, change SEASON_KEY.
+       ------------------------------------------------------------ */
+    const START_DATE = "2025-10-01";      // first day for the cycle (Europe/London)
+    const SEASON_KEY = "2025Q4-v1";       // bump to reshuffle order after edits
+
+    /* ------------------------------------------------------------
+       3) Logic below: deterministic shuffle + day index (Europe/London)
+       ------------------------------------------------------------ */
+
+    const TZ = "Europe/London";
+
+    function formatPrettyDate(date){
+      return new Intl.DateTimeFormat("en-GB", {
+        timeZone: TZ,
+        weekday:"short", day:"numeric", month:"short", year:"numeric"
+      }).format(date);
+    }
+
+    function todayInTZ(){
+      // Returns a Date representing "today at 00:00:00" in the target TZ
+      const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year:"numeric", month:"2-digit", day:"2-digit" });
+      const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
+      // build "YYYY-MM-DDT00:00:00" and interpret as UTC to avoid local offset shifting
+      return new Date(parts.year + "-" + parts.month + "-" + parts.day + "T00:00:00Z");
+    }
+
+    function parseYMD(ymd){
+      // ymd: "YYYY-MM-DD" -> Date at 00:00:00Z
+      return new Date(ymd + "T00:00:00Z");
+    }
+
+    function daysSince(startYMD, refDate = todayInTZ()){
+      const start = parseYMD(startYMD);
+      const ms = refDate - start; // both are midnight Z-constructed; difference is integral days
+      return Math.floor(ms / 86400000);
+    }
+
+    function hash32(str){
+      let h = 0;
+      for (let i = 0; i < str.length; i++){
+        h = (h * 31 + str.charCodeAt(i)) | 0;
+      }
+      return Math.abs(h);
+    }
+
+    function shuffledIndices(n, seedStr){
+      const seed = hash32(seedStr);
+      const arr = [...Array(n).keys()];
+      // Fisher–Yates with deterministic "random" using seed
+      for (let i = n - 1; i > 0; i--){
+        const j = Math.abs(hash32(seed + ":" + i)) % (i + 1);
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    function pickPhotoForDay(dayNumber){
+      if (!PHOTOS.length) return null;
+      const order = shuffledIndices(PHOTOS.length, SEASON_KEY);
+      const idx = order[((dayNumber % PHOTOS.length) + PHOTOS.length) % PHOTOS.length]; // safe mod
+      return PHOTOS[idx];
+    }
+
+    // ---- Render ----
+    const els = {
+      img: document.getElementById("photo"),
+      cap: document.getElementById("caption"),
+      meta: document.getElementById("dateMeta"),
+      prev: document.getElementById("prevBtn"),
+      next: document.getElementById("nextBtn"),
+      today: document.getElementById("todayBtn"),
+      controls: document.getElementById("controls"),
+    };
+
+    // Toggle to true if you want manual day browsing controls visible:
+    const SHOW_DEBUG_CONTROLS = false;
+
+    function render(dayOffset = 0){
+      const baseDay = daysSince(START_DATE);
+      const dayNumber = baseDay + dayOffset;
+      const chosenDate = new Date(todayInTZ().getTime() + dayOffset * 86400000);
+
+      const photo = pickPhotoForDay(dayNumber);
+      if (photo){
+        els.img.src = photo.src;
+        els.img.alt = photo.alt || "Daily photo";
+        els.cap.textContent = photo.caption || "";
+        els.cap.style.display = photo.caption ? "block" : "none";
+      } else {
+        els.img.removeAttribute("src");
+        els.img.alt = "";
+        els.cap.style.display = "none";
+      }
+
+      els.meta.textContent = formatPrettyDate(chosenDate);
+    }
+
+    // Optional manual browsing (for testing content)
+    let offset = 0;
+    function bindControls(){
+      if (!SHOW_DEBUG_CONTROLS){
+        els.controls.style.display = "none";
+        return;
+      }
+      els.controls.style.display = "flex";
+      els.prev.addEventListener("click", () => { offset--; render(offset); });
+      els.next.addEventListener("click", () => { offset++; render(offset); });
+      els.today.addEventListener("click", () => { offset = 0; render(offset); });
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      bindControls();
+      render(0);
+    });
+  </script>
+</body>
+</html>
